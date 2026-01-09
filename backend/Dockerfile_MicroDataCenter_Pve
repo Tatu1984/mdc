@@ -1,0 +1,193 @@
+# Proxmox VE API Client - Lightweight alternative to full PVE installation
+FROM python:3.11-slim
+
+# Create non-root user
+RUN groupadd -r pveapi --gid=1002 && \
+    useradd -r -g pveapi --uid=1002 --home-dir=/app --shell=/bin/bash pveapi
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Install Python dependencies for PVE API interaction
+RUN pip install --no-cache-dir \
+    proxmoxer \
+    requests \
+    paramiko \
+    fastapi \
+    uvicorn \
+    python-multipart
+
+# Create directories with proper permissions
+RUN mkdir -p /app/logs /app/config /app/scripts && \
+    chown -R pveapi:pveapi /app
+
+# Copy PVE mock API server
+COPY <<EOF /app/config/pve-mock-server.py
+#!/usr/bin/env python3
+"""
+Mock Proxmox VE API Server with File-Based Responses
+This container loads mock responses from JSON files for easy customization
+"""
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+import uvicorn
+import os
+import json
+import logging
+from pathlib import Path
+from typing import Dict, Any, Optional
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="Mock Proxmox VE API", version="1.0.0")
+
+# Base path for mock responses
+MOCK_RESPONSES_PATH = "/app/mock-responses"
+
+def load_json_response(file_path: str) -> Optional[Dict[Any, Any]]:
+    """Load JSON response from file"""
+    try:
+        full_path = Path(MOCK_RESPONSES_PATH) / file_path
+        if full_path.exists() and full_path.is_file():
+            with open(full_path, 'r') as f:
+                return json.load(f)
+        else:
+            logger.warning(f"Mock response file not found: {full_path}")
+            return None
+    except Exception as e:
+        logger.error(f"Error loading mock response from {file_path}: {e}")
+        return None
+
+def get_fallback_response(endpoint: str) -> Dict[Any, Any]:
+    """Provide fallback responses when files are not found"""
+    fallbacks = {
+        "root": {"message": "Mock Proxmox VE API Server", "version": "7.4"},
+        "health": {"status": "healthy", "service": "mock-pve-api"},
+        "nodes": {"data": []},
+        "resources": {"data": []},
+        "version": {"data": {"version": "7.4-15", "release": "bullseye", "repoid": "mock-pve"}},
+        "ticket": {"data": {"ticket": "PVE:fallback-ticket", "CSRFPreventionToken": "fallback-csrf", "username": "root@pam"}}
+    }
+    return fallbacks.get(endpoint, {"error": "No fallback available"})
+
+@app.get("/")
+async def root():
+    """Root endpoint"""
+    response = load_json_response("root.json")
+    return response or get_fallback_response("root")
+
+@app.get("/health")
+async def health():
+    """Health check endpoint"""
+    response = load_json_response("health.json")
+    return response or get_fallback_response("health")
+
+@app.post("/api2/json/access/ticket")
+async def get_ticket(request: Request):
+    """Mock authentication endpoint"""
+    response = load_json_response("api2/json/access/ticket.json")
+    return response or get_fallback_response("ticket")
+
+@app.get("/api2/json/nodes")
+async def get_nodes():
+    """Mock nodes endpoint"""
+    response = load_json_response("api2/json/nodes/index.json")
+    return response or get_fallback_response("nodes")
+
+@app.get("/api2/json/cluster/resources")
+async def get_resources():
+    """Mock cluster resources endpoint"""
+    response = load_json_response("api2/json/cluster/resources.json")
+    return response or get_fallback_response("resources")
+
+@app.get("/api2/json/nodes/{node}/qemu")
+async def get_node_vms(node: str):
+    """Mock VMs for a specific node"""
+    response = load_json_response(f"api2/json/nodes/{node}/qemu/index.json")
+    if response:
+        return response
+    else:
+        # Return empty list if node-specific file not found
+        return {"data": []}
+
+@app.get("/api2/json/version")
+async def get_version():
+    """Mock version endpoint"""
+    response = load_json_response("api2/json/version/index.json")
+    return response or get_fallback_response("version")
+
+@app.get("/api2/json/cluster/status")
+async def get_cluster_status():
+    """Mock cluster status endpoint"""
+    response = load_json_response("api2/json/cluster/status.json")
+    return response or get_fallback_response("cluster_status")
+
+@app.get("/api2/json/nodes/{node}/qemu/{vmid}/config")
+async def get_vm_config(node: str, vmid: str):
+    """Mock VM configuration endpoint"""
+    response = load_json_response(f"api2/json/nodes/{node}/qemu/{vmid}/config.json")
+    if response:
+        return response
+    else:
+        # Return basic config if specific file not found
+        return {
+            "data": {
+                "name": f"vm-{vmid}",
+                "cores": 1,
+                "memory": 1024,
+                "description": f"Mock VM {vmid} on {node}",
+                "template": 0
+            }
+        }
+
+@app.get("/{path:path}")
+async def catch_all(path: str):
+    """Catch-all endpoint for unmapped routes"""
+    logger.info(f"Unmapped endpoint requested: /{path}")
+    
+    # Try to find a corresponding JSON file
+    json_path = f"{path.strip('/')}.json"
+    if not json_path.endswith('.json'):
+        json_path = f"{json_path}/index.json"
+    
+    response = load_json_response(json_path)
+    if response:
+        return response
+    
+    # Return 404 for truly unknown endpoints
+    raise HTTPException(status_code=404, detail=f"Endpoint not found: /{path}")
+
+if __name__ == "__main__":
+    logger.info(f"Starting Mock PVE API Server")
+    logger.info(f"Mock responses path: {MOCK_RESPONSES_PATH}")
+    
+    port = int(os.getenv('PORT', 8006))
+    uvicorn.run(app, host="0.0.0.0", port=port)
+EOF
+
+# Set proper permissions
+RUN chown -R pveapi:pveapi /app && \
+    chmod +x /app/config/pve-mock-server.py
+
+# Switch to non-root user  
+USER pveapi
+
+# Expose port for API service
+EXPOSE 8006
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8006/health || exit 1
+
+# Default command - run the mock PVE API server
+CMD ["python", "/app/config/pve-mock-server.py"]

@@ -1,0 +1,358 @@
+trigger:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - VERSION
+    - helm/microdatacenter/Chart.yaml
+    - helm/microdatacenter/values.yaml
+    - helm/microdatacenter/templates/
+    exclude:
+    - Documentation/  # Exclude documentation to prevent infinite loop
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - name: acrRegistry
+    value: 'microdatacenterdevelopment.azurecr.io'
+  - name: repositoryName
+    value: 'microdatacenter'
+  - name: helmChartPath
+    value: 'helm/microdatacenter'
+
+stages:
+
+- stage: PackageHelmChart
+  displayName: 'Package Helm Chart'
+  jobs:
+  - job: PackageJob
+    displayName: 'Package Helm Chart'
+    steps:
+    - checkout: self
+      fetchDepth: 1
+      
+    - task: PowerShell@2
+      displayName: 'Read Version'
+      name: 'setVersion'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $version = Get-Content "$(Build.SourcesDirectory)\VERSION" -Raw
+          $version = $version.Trim()
+          Write-Host "Version from file: $version"
+          Write-Output "##vso[task.setvariable variable=appVersion;isOutput=true]$version"
+    
+    - script: |
+        # Install Helm
+        curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        chmod 700 get_helm.sh
+        ./get_helm.sh
+        
+        # Update Chart.yaml with current version
+        VERSION=$(cat VERSION | tr -d '\r\n')
+        BUILD_ID="$(Build.BuildId)"
+        CHART_VERSION="${VERSION}-${BUILD_ID}"
+        
+        echo "Original Chart.yaml:"
+        cat $(helmChartPath)/Chart.yaml
+        echo ""
+        
+        echo "VERSION: $VERSION"
+        echo "BUILD_ID: $BUILD_ID" 
+        echo "CHART_VERSION: $CHART_VERSION"
+        echo ""
+        
+        echo "Updating Chart.yaml with chart version: $CHART_VERSION and app version: $VERSION"
+        
+        # Update version and appVersion in Chart.yaml
+        sed -i "s/^version:.*/version: $CHART_VERSION/" $(helmChartPath)/Chart.yaml
+        sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" $(helmChartPath)/Chart.yaml
+        
+        echo "Updated Chart.yaml:"
+        cat $(helmChartPath)/Chart.yaml
+        echo ""
+        
+        # Lint the chart
+        echo "Linting Helm chart..."
+        helm lint $(helmChartPath)
+        
+        # Package the chart
+        echo "Packaging Helm chart..."
+        helm package $(helmChartPath) --destination $(Build.ArtifactStagingDirectory)
+        
+        # List packaged files
+        echo "Packaged files:"
+        ls -la $(Build.ArtifactStagingDirectory)/
+      displayName: 'Package Helm Chart'
+
+    - task: Docker@2
+      displayName: 'Login to ACR'
+      inputs:
+        containerRegistry: 'ADR_Dev'
+        command: 'login'
+
+    - script: |
+        # Push Helm chart to ACR using OCI
+        VERSION=$(cat VERSION | tr -d '\r\n')
+        BUILD_ID=$(Build.BuildId)
+        CHART_VERSION="${VERSION}-${BUILD_ID}"
+        CHART_FILE="microdatacenter-${CHART_VERSION}.tgz"
+        
+        echo "Pushing chart: $CHART_FILE"
+        echo "Chart version: $CHART_VERSION"
+        
+        # Use helm push with OCI registry
+        helm push $(Build.ArtifactStagingDirectory)/$CHART_FILE oci://$(acrRegistry)/charts
+        
+        if [ $? -eq 0 ]; then
+          echo "Chart pushed successfully!"
+          echo "##[section]Installation Command:"
+          echo "helm install microdatacenter oci://$(acrRegistry)/charts/microdatacenter --version $CHART_VERSION"
+        else
+          echo "##[error]Failed to push Helm chart"
+          exit 1
+        fi
+      displayName: 'Push Helm Chart to ACR'
+
+    - publish: $(Build.ArtifactStagingDirectory)
+      artifact: 'helm-chart'
+      displayName: 'Publish Helm Chart Artifact'
+
+- stage: UpdateDocumentation
+  displayName: 'Update Documentation'
+  dependsOn: PackageHelmChart
+  variables:
+    appVersion: $[ stageDependencies.PackageHelmChart.PackageJob.outputs['setVersion.appVersion'] ]
+  jobs:
+  - job: UpdateDocs
+    displayName: 'Update Documentation'
+    steps:
+    - checkout: self
+      persistCredentials: true
+      fetchDepth: 1
+    
+    - script: |
+        VERSION=$(appVersion)
+        BUILD_ID=$(Build.BuildId)
+        CHART_VERSION="${VERSION}-${BUILD_ID}"
+        
+        echo "Updating documentation with chart version: $CHART_VERSION"
+        
+        # Update K3S deployment guide with latest chart version
+        sed -i "s/tag: \"[0-9]*\.[0-9]*\.[0-9]*-[0-9]*\"/tag: \"$CHART_VERSION\"/g" Documentation/K3S_DEPLOYMENT_GUIDE.md
+        sed -i "s/version [0-9]*\.[0-9]*\.[0-9]*-[0-9]*/version $CHART_VERSION/g" Documentation/K3S_DEPLOYMENT_GUIDE.md
+        
+        # Update Helm chart README with latest versions
+        sed -i "s/tag: \"[0-9]*\.[0-9]*\.[0-9]*-[0-9]*\"/tag: \"$CHART_VERSION\"/g" Documentation/HELM_CHART_README.md
+        sed -i "s/microdatacenter-[0-9]*\.[0-9]*\.[0-9]*-[0-9]*/microdatacenter-$CHART_VERSION/g" Documentation/HELM_CHART_README.md
+        
+        # Update values example file
+        sed -i "s/tag: \"[0-9]*\.[0-9]*\.[0-9]*-[0-9]*\"/tag: \"$CHART_VERSION\"/g" Documentation/values-example.yaml
+        
+        echo "Documentation updated successfully"
+      displayName: 'Update Documentation Files'
+    
+    - script: |
+        VERSION=$(appVersion)
+        BUILD_ID=$(Build.BuildId)
+        CHART_VERSION="${VERSION}-${BUILD_ID}"
+        
+        # Configure Git
+        git config user.name "Azure DevOps"
+        git config user.email "devops@microdatacenter.com"
+        
+        # Check for changes in Documentation folder only
+        if git diff --quiet HEAD -- Documentation/; then
+          echo "No documentation changes to commit"
+        else
+          echo "Committing documentation updates..."
+          
+          # Add only Documentation folder changes (prevents trigger loop)
+          git add Documentation/
+          
+          # Commit with skip CI directive
+          git commit -m "docs: Update Helm chart documentation for v$CHART_VERSION [skip ci]"
+          
+          # Push changes
+          git push origin HEAD:$(Build.SourceBranchName)
+          
+          echo "Documentation updated and committed"
+        fi
+      displayName: 'Commit Documentation Updates'
+
+- stage: CreateRelease
+  displayName: 'Create Azure DevOps Release'
+  dependsOn: 
+  - PackageHelmChart
+  - UpdateDocumentation
+  variables:
+    appVersion: $[ stageDependencies.PackageHelmChart.PackageJob.outputs['setVersion.appVersion'] ]
+  jobs:
+  - job: CreateReleaseJob
+    displayName: 'Create Release'
+    steps:
+    - checkout: self
+      fetchDepth: 1
+      
+    - download: current
+      artifact: 'helm-chart'
+      
+    - task: PowerShell@2
+      displayName: 'Generate Release Notes'
+      name: 'releaseNotes'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $version = "$(appVersion)"
+          $buildId = "$(Build.BuildId)"
+          $chartVersion = "${version}-${buildId}"
+          
+          $releaseNotes = @"
+          # MicroDataCenter Helm Chart v$chartVersion
+          
+          ## Helm Chart Information
+          - **Chart Version**: $chartVersion
+          - **App Version**: $version
+          - **Build**: $(Build.BuildId)
+          - **Registry**: $(acrRegistry)/charts/microdatacenter
+          
+          ## Installation
+          
+          ### Quick Install
+          ``````bash
+          # Add the chart repository
+          helm registry login $(acrRegistry)
+          
+          # Install the chart
+          helm install microdatacenter oci://$(acrRegistry)/charts/microdatacenter \
+            --version $chartVersion \
+            --namespace microdatacenter \
+            --create-namespace \
+            --values custom-values.yaml
+          ``````
+          
+          ### Docker Images Included
+          - API: $(acrRegistry)/$(repositoryName)-api:$chartVersion
+          - Web: $(acrRegistry)/$(repositoryName)-web:$chartVersion  
+          - Auth: $(acrRegistry)/$(repositoryName)-auth:$chartVersion
+          - Database: postgres:15-alpine
+          
+          ## Configuration
+          
+          Create a `custom-values.yaml` file with your settings:
+          
+          ``````yaml
+          # Update with your domain and credentials
+          ingress:
+            host: "microdatacenter.yourdomain.com"
+            tls:
+              provider: "letsencrypt"
+              letsencrypt:
+                email: "admin@yourdomain.com"
+          
+          secrets:
+            dbPassword: "your-secure-password"
+            keycloakAdmin:
+              password: "your-keycloak-password"
+            proxmoxCredentials:
+              baseUrl: "https://your-proxmox:8006/api2/json/"
+              tokenId: "user@pam!token"
+              secret: "your-token-secret"
+          ``````
+          
+          ## Documentation
+          - [Complete Deployment Guide]($(System.TeamFoundationCollectionUri)$(System.TeamProject)/_git/$(Build.Repository.Name)?path=/Documentation/K3S_DEPLOYMENT_GUIDE.md)
+          - [Helm Chart Documentation]($(System.TeamFoundationCollectionUri)$(System.TeamProject)/_git/$(Build.Repository.Name)?path=/Documentation/HELM_CHART_README.md)
+          - [Values Example]($(System.TeamFoundationCollectionUri)$(System.TeamProject)/_git/$(Build.Repository.Name)?path=/Documentation/values-example.yaml)
+          
+          ## Support
+          For issues and support, please create a work item in Azure DevOps.
+          "@
+          
+          Write-Output "##vso[task.setvariable variable=notes;isOutput=true]$releaseNotes"
+    
+
+    - task: PowerShell@2
+      displayName: 'Create Azure DevOps Release'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $version = "$(appVersion)"
+          $buildId = "$(Build.BuildId)"
+          $chartVersion = "${version}-${buildId}"
+          $releaseNotes = @"
+          # MicroDataCenter Helm Chart v$chartVersion
+          
+          ## Helm Chart Information
+          - **Chart Version**: $chartVersion
+          - **App Version**: $version
+          - **Build**: $buildId
+          - **Registry**: $(acrRegistry)/charts/microdatacenter
+          
+          ## Installation
+          ``````bash
+          helm install microdatacenter oci://$(acrRegistry)/charts/microdatacenter \
+            --version $chartVersion \
+            --namespace microdatacenter \
+            --create-namespace \
+            --values custom-values.yaml \
+            --set image.tag="$chartVersion"
+          ``````
+          
+          ## Docker Images
+          - API: $(acrRegistry)/$(repositoryName)-api:$chartVersion
+          - Web: $(acrRegistry)/$(repositoryName)-web:$chartVersion  
+          - Auth: $(acrRegistry)/$(repositoryName)-auth:$chartVersion
+          "@
+          
+          # Create release using Azure DevOps REST API
+          $org = "$(System.TeamFoundationCollectionUri)"
+          $project = "$(System.TeamProject)"
+          $repo = "$(Build.Repository.Name)"
+          $commitId = "$(Build.SourceVersion)"
+          
+          $headers = @{
+              "Authorization" = "Bearer $(System.AccessToken)"
+              "Content-Type" = "application/json"
+          }
+          
+          $releaseBody = @{
+              tagName = "helm-v$chartVersion"
+              name = "Helm Chart v$chartVersion"
+              description = $releaseNotes
+              commitish = $commitId
+              draft = $false
+              prerelease = $false
+          } | ConvertTo-Json -Depth 10
+          
+          try {
+              $uri = "$org$project/_apis/git/repositories/$repo/refs?api-version=6.0"
+              Write-Host "Creating Git tag: helm-v$chartVersion"
+              
+              $tagBody = @{
+                  name = "refs/tags/helm-v$chartVersion"
+                  oldObjectId = "0000000000000000000000000000000000000000"
+                  newObjectId = $commitId
+              } | ConvertTo-Json
+              
+              $tagResponse = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body "[$tagBody]"
+              Write-Host "Git tag created successfully"
+              
+              Write-Host "==============================================="
+              Write-Host "Release Created: helm-v$chartVersion"
+              Write-Host "Chart Version: $chartVersion"
+              Write-Host "Installation Command:"
+              Write-Host "helm install microdatacenter oci://$(acrRegistry)/charts/microdatacenter --version $chartVersion --set image.tag=`"$chartVersion`""
+              Write-Host "==============================================="
+          }
+          catch {
+              Write-Warning "Could not create Git tag: $($_.Exception.Message)"
+              Write-Host "==============================================="
+              Write-Host "Helm Chart Build Complete: $chartVersion"
+              Write-Host "Chart Version: $chartVersion"
+              Write-Host "Installation Command:"
+              Write-Host "helm install microdatacenter oci://$(acrRegistry)/charts/microdatacenter --version $chartVersion --set image.tag=`"$chartVersion`""
+              Write-Host "==============================================="
+          }

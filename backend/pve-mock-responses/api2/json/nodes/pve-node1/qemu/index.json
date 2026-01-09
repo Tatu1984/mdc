@@ -1,0 +1,19 @@
+{
+  "data": [
+    {
+      "vmid": 100,
+      "name": "test-vm-1",
+      "status": "running",
+      "maxmem": 2147483648,
+      "maxdisk": 21474836480,
+      "cpu": 0.05,
+      "mem": 1073741824,
+      "disk": 5368709120,
+      "pid": 1234,
+      "uptime": 3600,
+      "cpus": 2,
+      "template": 0,
+      "tags": "production,web-server"
+    }
+  ]
+}

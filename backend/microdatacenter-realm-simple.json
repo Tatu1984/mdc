@@ -1,0 +1,241 @@
+{
+  "realm": "microdatacenter",
+  "enabled": true,
+  "displayName": "MicroDataCenter",
+  "displayNameHtml": "<div class=\"kc-logo-text\"><span>MicroDataCenter</span></div>",
+  "accessTokenLifespan": 3600,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "registrationAllowed": false,
+  "resetPasswordAllowed": true,
+  "rememberMe": true,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "internationalizationEnabled": true,
+  "supportedLocales": ["en", "es", "fr", "de"],
+  "defaultLocale": "en",
+  "roles": {
+    "realm": [
+      {
+        "name": "GlobalAdministrator",
+        "description": "Global Administrator - Full system access across all datacenters",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "DatacenterTechnician",
+        "description": "Datacenter Technician - Can manage datacenter infrastructure and resources",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "WorkspaceManager",
+        "description": "Workspace Manager - Can manage workspaces and their resources",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "WorkspaceTenant",
+        "description": "Workspace Tenant - Can use workspace resources but not manage them",
+        "composite": false,
+        "clientRole": false
+      }
+    ]
+  },
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "MDC",
+      "lastName": "Administrator",
+      "email": "admin@microdatacenter.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "keycloak_admin_secure_2024",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "GlobalAdministrator",
+        "DatacenterTechnician",
+        "WorkspaceManager",
+        "WorkspaceTenant"
+      ],
+      "attributes": {
+        "api_key": ["mdc_api_key_admin_2024"],
+        "department": ["IT"],
+        "organization": ["MicroDataCenter"]
+      }
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "mdc-web",
+      "name": "MicroDataCenter Web Application",
+      "description": "React/Next.js Web Application Client",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "mdc-web-client-secret-2024",
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://localhost:3000/auth/callback",
+        "http://mdc-web:3000/*",
+        "http://mdc-web:3000/auth/callback",
+        "http://localhost:3000/silent-check-sso.html",
+        "https://microdatacenter.local/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://mdc-web:3000",
+        "https://microdatacenter.local"
+      ],
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "username",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "email",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "email",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "ream_access.roles",
+            "jsonType.label": "String",
+            "multivalued": "true"
+          }
+        },
+        {
+          "name": "api_key",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "api_key",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "api_key",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "mdc-api",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "mdc-api",
+      "name": "MicroDataCenter API",
+      "description": "Backend API Client for service-to-service communication",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "mdc-api-client-secret-2024",
+      "redirectUris": [],
+      "webOrigins": [],
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "bearerOnly": true,
+      "attributes": {
+        "access.token.lifespan": "3600"
+      },
+      "protocolMappers": [
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "username",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "roles",
+          "protocol": "openid-connect", 
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true"
+          }
+        },
+        {
+          "name": "api_key",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "api_key",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "api_key",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    }
+  ]
+}

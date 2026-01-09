@@ -1,0 +1,106 @@
+# Enhanced API Pipeline with Testing and Versioning
+trigger:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - MDC.Api/**
+    - MDC.Core/**
+    - MDC.Shared/**
+    - MDC.Api.Tests/**
+    - MDC.Core.Tests/**
+    - MDC.Shared.Tests/**
+    - Dockerfile_MicroDataCenter_Api
+    - VERSION
+
+variables:
+  # Container registry variables
+  containerRegistry: 'ADR_Dev'
+  repository: 'mdc-api'
+  dockerfilePath: 'Dockerfile_MicroDataCenter_Api'
+  
+  # Version variables
+  majorMinorVersion: '1.0'
+  patchVersion: $[counter(variables['majorMinorVersion'], 0)]
+  imageTag: '$(majorMinorVersion).$(patchVersion)'
+  buildId: '$(Build.BuildNumber)'
+  
+  # .NET variables
+  buildConfiguration: 'Release'
+  dotNetVersion: '9.0.x'
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+- stage: Test
+  displayName: 'Run Tests'
+  jobs:
+  - job: UnitTests
+    displayName: 'Unit Tests'
+    steps:
+    - task: UseDotNet@2
+      displayName: 'Install .NET SDK'
+      inputs:
+        packageType: 'sdk'
+        version: '$(dotNetVersion)'
+    
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore packages'
+      inputs:
+        command: 'restore'
+        projects: '**/*.csproj'
+    
+    - task: DotNetCoreCLI@2
+      displayName: 'Build solution'
+      inputs:
+        command: 'build'
+        projects: '**/*.csproj'
+        arguments: '--configuration $(buildConfiguration) --no-restore'
+    
+    - task: DotNetCoreCLI@2
+      displayName: 'Run unit tests'
+      inputs:
+        command: 'test'
+        projects: |
+          **/*Tests.csproj
+          !**/MDC.Integration.Tests.csproj
+        arguments: '--configuration $(buildConfiguration) --no-build --logger trx --collect:"XPlat Code Coverage"'
+        publishTestResults: true
+    
+    - task: PublishCodeCoverageResults@2
+      displayName: 'Publish code coverage'
+      inputs:
+        summaryFileLocation: '$(Agent.TempDirectory)/**/coverage.cobertura.xml'
+        codecoverageTool: 'Cobertura'
+
+- stage: Build
+  displayName: 'Build and Push'
+  dependsOn: Test
+  condition: succeeded()
+  jobs:
+  - job: BuildAndPush
+    displayName: 'Build and Push Docker Image'
+    steps:
+    - task: Docker@2
+      displayName: 'Build and push Docker image'
+      inputs:
+        containerRegistry: '$(containerRegistry)'
+        repository: '$(repository)'
+        command: 'buildAndPush'
+        Dockerfile: '$(dockerfilePath)'
+        tags: |
+          $(imageTag)-$(buildId)
+          $(imageTag)
+          latest
+    
+    - task: Docker@2
+      displayName: 'Tag with build metadata'
+      inputs:
+        containerRegistry: '$(containerRegistry)'
+        repository: '$(repository)'
+        command: 'push'
+        tags: |
+          $(imageTag)-build$(Build.BuildId)
+          $(Build.SourceBranchName)-$(Build.SourceVersion)

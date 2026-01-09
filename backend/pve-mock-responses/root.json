@@ -1,0 +1,5 @@
+{
+  "message": "Mock Proxmox VE API Server",
+  "version": "7.4",
+  "repoid": "mock-pve-server"
+}

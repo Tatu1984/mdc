@@ -1,0 +1,20 @@
+apiVersion: v2
+name: microdatacenter
+description: A Helm chart for MicroDataCenter application on k3s
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+home: https://github.com/yourusername/microdatacenter
+sources:
+  - https://github.com/yourusername/microdatacenter
+maintainers:
+  - name: MicroDataCenter Team
+    email: support@microdatacenter.com
+keywords:
+  - microdatacenter
+  - datacenter
+  - management
+  - proxmox
+  - virtualization
+annotations:
+  category: Infrastructure

@@ -1,0 +1,210 @@
+# Example custom values file for MicroDataCenter
+# Copy this file to custom-values.yaml and modify for your environment
+
+# Global settings
+global:
+  imageRegistry: "microdatacenterdevelopment.azurecr.io"
+  imagePullSecrets:
+    - name: azure-registry-secret  # Create this secret first
+
+# Image tags - Update with your latest build
+image:
+  tag: "1.0.0-36"  # Replace with your latest pipeline build
+
+# Ingress configuration - REQUIRED
+ingress:
+  enabled: true
+  className: "traefik"  # k3s default
+  host: "microdatacenter.yourdomain.com"  # CHANGE THIS to your domain
+  
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  
+  # TLS Configuration
+  tls:
+    enabled: true
+    provider: "letsencrypt"  # Options: selfsigned, letsencrypt, custom
+    
+    letsencrypt:
+      email: "admin@yourdomain.com"  # CHANGE THIS to your email
+      server: "https://acme-v02.api.letsencrypt.org/directory"  # Production
+      # server: "https://acme-staging-v02.api.letsencrypt.org/directory"  # Staging for testing
+
+# API Service Configuration
+api:
+  enabled: true
+  replicaCount: 1
+  
+  resources:
+    limits:
+      cpu: 1000m      # Adjust based on your VM specs
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  
+  # Enable autoscaling for production
+  autoscaling:
+    enabled: false  # Set to true for production
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+
+# Web Application Configuration
+web:
+  enabled: true
+  replicaCount: 1
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  
+  # Next.js environment variables
+  env:
+    NODE_ENV: "production"
+    # NEXT_PUBLIC_API_URL will be automatically set based on ingress config
+  
+  serverEnv:
+    # Add server-side environment variables here
+    LOG_LEVEL: "info"
+
+# Database Configuration
+db:
+  enabled: true
+  external: false  # Set to true if using external PostgreSQL
+  
+  postgresql:
+    persistence:
+      enabled: true
+      storageClass: ""  # Use default storage class (local-path in k3s)
+      size: 20Gi       # Adjust based on your needs
+    
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 2Gi    # PostgreSQL needs more memory
+      requests:
+        cpu: 500m
+        memory: 1Gi
+    
+    auth:
+      database: "microdatacenter"
+      username: "mdc_user"
+
+# Authentication Service (Keycloak)
+auth:
+  enabled: true
+  replicaCount: 1
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi      # Keycloak needs significant memory
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  
+  keycloak:
+    database: "keycloak"
+    dbUser: "mdc_user"
+    hostnameStrict: "false"
+    hostnameStrictHttps: "false"
+    httpEnabled: "true"
+    realm: "microdatacenter"
+  
+  persistence:
+    enabled: true
+    size: 5Gi
+
+# Secrets Configuration - REQUIRED
+secrets:
+  # Database passwords (use strong passwords in production)
+  dbPassword: "your-secure-database-password-here"  # CHANGE THIS
+  dbConnectionString: "Host=microdatacenter-db;Port=5432;Database=microdatacenter;Username=mdc_user;Password=your-secure-database-password-here;SSL Mode=Prefer"  # Complete connection string with actual password
+  
+  # Keycloak Admin credentials
+  keycloakAdmin:
+    username: "admin"
+    password: "your-secure-keycloak-admin-password"  # CHANGE THIS
+  
+  # Keycloak database password (can be same as main DB or different)
+  keycloakDbPassword: "your-secure-keycloak-db-password"  # CHANGE THIS
+  
+  # JWT and API secrets (will be auto-generated if left empty)
+  jwtSecret: ""     # Leave empty for auto-generation
+  apiSecret: ""     # Leave empty for auto-generation
+  
+  # Proxmox API Token credentials - REQUIRED for Proxmox integration
+  proxmoxCredentials:
+    baseUrl: "https://your-proxmox-server.local:8006/api2/json/"  # CHANGE THIS
+    tokenId: "user@pam!your-token-name"  # CHANGE THIS
+    secret: "your-proxmox-api-token-secret"  # CHANGE THIS
+
+# Configuration Maps for non-sensitive settings
+configMaps:
+  appConfig:
+    LOG_LEVEL: "Information"
+    MAX_REQUEST_SIZE: "32MB"
+    CACHE_TIMEOUT: "300"
+    
+    # API-specific settings
+    API_RUN_DB_MIGRATIONS: "true"
+    API_KEYS_ENABLED: "true"
+    
+    # CORS settings
+    CORS__ALLOWEDORIGINS__0: "https://microdatacenter.yourdomain.com"  # CHANGE THIS
+    CORS__ALLOWEDORIGINS__1: "http://localhost:3000"  # For development
+    
+    # Keycloak settings
+    KEYCLOAK_REALM: "microdatacenter"
+    KEYCLOAK_RESOURCE: "mdc-api"
+    KEYCLOAK_VERIFY_TOKEN_AUDIENCE: "true"
+
+# Security settings
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 2000
+
+podSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+
+# Node selection (optional)
+nodeSelector: {}
+
+# Tolerations for scheduling (optional)
+tolerations: []
+
+# Affinity rules for pod distribution
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - microdatacenter
+        topologyKey: kubernetes.io/hostname
+
+# External database configuration (only if db.external = true)
+# db:
+#   external: true
+#   externalDatabase:
+#     host: "your-postgres-host"
+#     port: 5432
+#     database: "microdatacenter"
+#     username: "mdc_user"
+#     sslMode: "require"

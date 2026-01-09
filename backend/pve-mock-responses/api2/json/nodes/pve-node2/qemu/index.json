@@ -1,0 +1,18 @@
+{
+  "data": [
+    {
+      "vmid": 101,
+      "name": "test-vm-2",
+      "status": "stopped", 
+      "maxmem": 1073741824,
+      "maxdisk": 10737418240,
+      "cpu": 0,
+      "mem": 0,
+      "disk": 2684354560,
+      "uptime": 0,
+      "cpus": 1,
+      "template": 0,
+      "tags": "development,database"
+    }
+  ]
+}

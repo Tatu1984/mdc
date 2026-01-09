@@ -1,0 +1,512 @@
+# Multi-Service Pipeline with VERSION + BuildID Tagging
+# Manual approval required for production image pushes
+
+trigger: none  # Disable automatic triggers
+
+pr:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - VERSION
+    - MDC.Api/**
+    - MDC.Core/**
+    - MDC.Shared/**
+    - MDC.Web/**
+    - Dockerfile_MicroDataCenter_*
+
+variables:
+  containerRegistry: 'ADR_Dev'
+  buildConfiguration: 'Release'
+  dotNetVersion: '9.0.x'
+  # Tag format: VERSION-BuildID (e.g., 1.0.0-20240819.5)
+  imageTag: '$(appVersion)-$(Build.BuildId)'
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+# Test Stage - Always run tests
+- stage: Test
+  displayName: 'Run Tests'
+  jobs:
+  - job: UnitTests
+    displayName: 'Unit Tests'
+    steps:
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        version: '$(dotNetVersion)'
+    
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore packages'
+      inputs:
+        command: 'restore'
+        projects: '**/*.csproj'
+    
+    - task: DotNetCoreCLI@2
+      displayName: 'Build solution'
+      inputs:
+        command: 'build'
+        projects: '**/*.csproj'
+        arguments: '--configuration $(buildConfiguration) --no-restore'
+    
+    - script: |
+        echo "##[section]🔍 Pre-test Diagnostics"
+        echo "Current directory: $(pwd)"
+        echo "Test project files:"
+        find . -name "*.Tests.csproj" -not -path "*/MDC.Integration.Tests*"
+        echo ""
+        echo "Test data files in output directories:"
+        find . -name "*.json" -path "*/bin/Debug/net9.0/*" | head -10
+        echo "Directory structure of MDC.Core.Tests output:"
+        ls -la "MDC.Core.Tests/bin/Debug/net9.0/" || echo "Output directory not found"
+      displayName: 'Test Environment Diagnostics'
+    
+    - task: DotNetCoreCLI@2
+      displayName: 'Run unit tests with code coverage'
+      inputs:
+        command: 'test'
+        projects: |
+          **/*Tests.csproj
+          !**/MDC.Integration.Tests.csproj
+        arguments: '--configuration $(buildConfiguration) --no-build --logger trx --collect:"XPlat Code Coverage" --settings coverlet.runsettings /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura /p:CoverletOutput=./coverage/ /p:Exclude="[xunit*]*%2c[*.Tests*]*" --verbosity normal'
+        publishTestResults: true
+        failOnStandardError: true
+    
+    - script: |
+        echo "##[section]📊 Generating Code Coverage Report"
+        dotnet tool install -g dotnet-reportgenerator-globaltool || echo "ReportGenerator already installed"
+        
+        # Find all coverage files
+        find $(Agent.TempDirectory) -name "coverage.cobertura.xml" -type f
+        
+        # Generate HTML report
+        reportgenerator -reports:"$(Agent.TempDirectory)/**/coverage.cobertura.xml" -targetdir:"$(System.DefaultWorkingDirectory)/coveragereport" -reporttypes:"Html;HtmlSummary;Badges;TextSummary"
+        
+        # Display summary
+        if [ -f "$(System.DefaultWorkingDirectory)/coveragereport/Summary.txt" ]; then
+          echo "##[section]📈 Code Coverage Summary:"
+          cat "$(System.DefaultWorkingDirectory)/coveragereport/Summary.txt"
+        fi
+        
+        # Extract coverage percentage for display
+        if [ -f "$(System.DefaultWorkingDirectory)/coveragereport/Summary.txt" ]; then
+          COVERAGE=$(grep "Line coverage:" "$(System.DefaultWorkingDirectory)/coveragereport/Summary.txt" | awk '{print $3}')
+          echo "##vso[task.setvariable variable=codeCoverage;isOutput=true]$COVERAGE"
+          echo "##[command]Overall Line Coverage: $COVERAGE"
+          
+          # Set build tag with coverage (replace % with pct to avoid URL encoding issues)
+          COVERAGE_TAG=$(echo "$COVERAGE" | sed 's/%/pct/')
+          echo "##vso[build.addbuildtag]coverage-$COVERAGE_TAG"
+        fi
+      displayName: 'Generate Coverage Report'
+      name: coverage
+    
+    - task: PublishCodeCoverageResults@2
+      displayName: 'Publish code coverage to Azure DevOps'
+      condition: succeededOrFailed()
+      inputs:
+        summaryFileLocation: '$(Agent.TempDirectory)/**/coverage.cobertura.xml'
+        pathToSources: '$(System.DefaultWorkingDirectory)'
+        codecoverageTool: 'Cobertura'
+        reportDirectory: '$(System.DefaultWorkingDirectory)/coveragereport'
+        failIfCoverageEmpty: false
+    
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Coverage Report'
+      condition: succeededOrFailed()
+      inputs:
+        pathToPublish: '$(System.DefaultWorkingDirectory)/coveragereport'
+        artifactName: 'code-coverage-report'
+    
+    - script: |
+        echo "##[section]📊 Code Coverage Quality Gate"
+        if [ -n "$(coverage.codeCoverage)" ]; then
+          COVERAGE_NUM=$(echo "$(coverage.codeCoverage)" | sed 's/%//')
+          echo "Current Coverage: $(coverage.codeCoverage)"
+          
+          if (( $(echo "$COVERAGE_NUM >= 80" | bc -l) )); then
+            echo "##[command]✅ Coverage is excellent: $(coverage.codeCoverage)"
+          elif (( $(echo "$COVERAGE_NUM >= 60" | bc -l) )); then
+            echo "##[warning]⚠️ Coverage is acceptable but could be improved: $(coverage.codeCoverage)"
+          else
+            echo "##[warning]⚠️ Coverage is below recommended threshold: $(coverage.codeCoverage)"
+            echo "##[warning]Consider adding more unit tests to improve coverage"
+            # Uncomment the next line to fail the build on low coverage
+            # exit 1
+          fi
+        else
+          echo "##[warning]⚠️ Unable to determine coverage percentage"
+        fi
+      displayName: 'Coverage Quality Gate'
+
+# Manual Approval Gate
+- stage: ApprovalGate
+  displayName: 'Manual Approval for Image Push'
+  dependsOn: Test
+  condition: succeeded()
+  jobs:
+  - deployment: ApprovalJob
+    displayName: 'Approve Image Push'
+    environment: 'production-approval'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          - script: |
+              if [ -f "VERSION" ]; then
+                VERSION=$(cat VERSION)
+                echo "Found VERSION file with value: $VERSION"
+              else
+                VERSION="1.0.0"
+                echo "VERSION file not found, using default: $VERSION"
+              fi
+              
+              # Validate version format
+              if [[ ! $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "Invalid version format: $VERSION"
+                exit 1
+              fi
+              
+              echo "##vso[task.setvariable variable=appVersion;isOutput=true]$VERSION"
+              echo "##[section]🏗️ Build Configuration"
+              echo "Version: $VERSION"
+              echo "Build ID: $(Build.BuildId)"
+              echo "Image Tag: $VERSION-$(Build.BuildId)"
+              echo "Registry: microdatacenterdevelopment.azurecr.io"
+              echo ""
+              echo "##[warning]⚠️ This will create immutable Docker images with tag: $VERSION-$(Build.BuildId)"
+              echo "Ready to build and push images with version: $VERSION-$(Build.BuildId)"
+            name: setVersion
+            displayName: 'Read and Validate Version'
+
+# Build Services
+- stage: BuildServices
+  displayName: 'Build and Push Services'
+  dependsOn: ApprovalGate
+  condition: succeeded()
+  variables:
+    appVersion: $[ stageDependencies.ApprovalGate.ApprovalJob.outputs['ApprovalJob.setVersion.appVersion'] ]
+    codeCoverage: $[ stageDependencies.Test.UnitTests.outputs['coverage.codeCoverage'] ]
+  jobs:
+  
+  # API Service Build
+  - job: BuildAPI
+    displayName: 'Build API Service'
+    steps:
+    - checkout: self
+    - script: |
+        # Validate appVersion is not empty
+        if [ -z "$(appVersion)" ]; then
+          echo "ERROR: appVersion is empty!"
+          exit 1
+        fi
+        
+        IMAGE_TAG="$(appVersion)-$(Build.BuildId)"
+        echo "Building API with tag: $IMAGE_TAG"
+        echo "##vso[task.setvariable variable=imageTag]$IMAGE_TAG"
+      displayName: 'Set API Image Tag'
+    
+    - task: Docker@2
+      displayName: 'Build and push API image'
+      inputs:
+        containerRegistry: '$(containerRegistry)'
+        repository: 'mdc-api'
+        command: 'buildAndPush'
+        Dockerfile: 'Dockerfile_MicroDataCenter_Api'
+        tags: |
+          $(imageTag)
+    
+    - script: |
+        echo "✅ API Image Tag Created: $(imageTag)"
+      displayName: 'Display API Tag'
+  
+  # Web Service Build
+  - job: BuildWeb
+    displayName: 'Build Web Service'
+    steps:
+    - checkout: self
+    - script: |
+        # Validate appVersion is not empty
+        if [ -z "$(appVersion)" ]; then
+          echo "ERROR: appVersion is empty!"
+          exit 1
+        fi
+        
+        IMAGE_TAG="$(appVersion)-$(Build.BuildId)"
+        echo "Building Web with tag: $IMAGE_TAG"
+        echo "##vso[task.setvariable variable=imageTag]$IMAGE_TAG"
+      displayName: 'Set Web Image Tag'
+    
+    - task: Docker@2
+      displayName: 'Build and push Web image'
+      inputs:
+        containerRegistry: '$(containerRegistry)'
+        repository: 'mdc-web'
+        command: 'buildAndPush'
+        Dockerfile: 'Dockerfile_MicroDataCenter_Web'
+        tags: |
+          $(imageTag)
+    
+    - script: |
+        echo "✅ Web Image Tag Created: $(imageTag)"
+      displayName: 'Display Web Tag'
+  
+  # Database Service Build
+  - job: BuildDB
+    displayName: 'Build Database Service'
+    steps:
+    - checkout: self
+    - script: |
+        # Validate appVersion is not empty
+        if [ -z "$(appVersion)" ]; then
+          echo "ERROR: appVersion is empty!"
+          exit 1
+        fi
+        
+        IMAGE_TAG="$(appVersion)-$(Build.BuildId)"
+        echo "Building DB with tag: $IMAGE_TAG"
+        echo "##vso[task.setvariable variable=imageTag]$IMAGE_TAG"
+      displayName: 'Set DB Image Tag'
+    
+    - task: Docker@2
+      displayName: 'Build and push DB image'
+      inputs:
+        containerRegistry: '$(containerRegistry)'
+        repository: 'mdc-db'
+        command: 'buildAndPush'
+        Dockerfile: 'Dockerfile_MicroDataCenter_Db'
+        tags: |
+          $(imageTag)
+    
+    - script: |
+        echo "✅ DB Image Tag Created: $(imageTag)"
+      displayName: 'Display DB Tag'
+
+  # PVE Service Build
+  - job: BuildPVE
+    displayName: 'Build PVE Service'
+    steps:
+    - checkout: self
+    - script: |
+        # Validate appVersion is not empty
+        if [ -z "$(appVersion)" ]; then
+          echo "ERROR: appVersion is empty!"
+          exit 1
+        fi
+        
+        IMAGE_TAG="$(appVersion)-$(Build.BuildId)"
+        echo "Building PVE with tag: $IMAGE_TAG"
+        echo "##vso[task.setvariable variable=imageTag]$IMAGE_TAG"
+      displayName: 'Set PVE Image Tag'
+    
+    - task: Docker@2
+      displayName: 'Build and push PVE image'
+      inputs:
+        containerRegistry: '$(containerRegistry)'
+        repository: 'mdc-pve'
+        command: 'buildAndPush'
+        Dockerfile: 'Dockerfile_MicroDataCenter_Pve'
+        tags: |
+          $(imageTag)
+    
+    - script: |
+        echo "✅ PVE Image Tag Created: $(imageTag)"
+      displayName: 'Display PVE Tag'
+
+  # Auth Service Build
+  - job: BuildAuth
+    displayName: 'Build Auth Service'
+    steps:
+    - checkout: self
+    - script: |
+        # Validate appVersion is not empty
+        if [ -z "$(appVersion)" ]; then
+          echo "ERROR: appVersion is empty!"
+          exit 1
+        fi
+        
+        IMAGE_TAG="$(appVersion)-$(Build.BuildId)"
+        echo "Building Auth with tag: $IMAGE_TAG"
+        echo "##vso[task.setvariable variable=imageTag]$IMAGE_TAG"
+      displayName: 'Set Auth Image Tag'
+    
+    - task: Docker@2
+      displayName: 'Build and push Auth image'
+      inputs:
+        containerRegistry: '$(containerRegistry)'
+        repository: 'mdc-auth'
+        command: 'buildAndPush'
+        Dockerfile: 'Dockerfile_MicroDataCenter_Auth'
+        tags: |
+          $(imageTag)
+    
+    - script: |
+        echo "✅ Auth Image Tag Created: $(imageTag)"
+      displayName: 'Display Auth Tag'
+
+# Summary Stage - Display all created images
+- stage: Summary
+  displayName: 'Deployment Summary'
+  dependsOn: 
+  - BuildServices
+  - ApprovalGate
+  - Test
+  condition: succeeded()
+  variables:
+    appVersion: $[ stageDependencies.ApprovalGate.ApprovalJob.outputs['ApprovalJob.setVersion.appVersion'] ]
+    codeCoverage: $[ stageDependencies.Test.UnitTests.outputs['coverage.codeCoverage'] ]
+  jobs:
+  - job: DisplaySummary
+    displayName: 'Image Pull Instructions'
+    steps:
+    - checkout: self
+    - script: |
+        echo "##[section]🔍 Debug Variables"
+        echo "appVersion: '$(appVersion)'"
+        echo "codeCoverage: '$(codeCoverage)'"
+        echo "Build.BuildId: '$(Build.BuildId)'"
+        
+        # Validate appVersion is not empty
+        if [ -z "$(appVersion)" ]; then
+          echo "##[error]appVersion is empty! Check variable passing from ApprovalGate stage."
+          echo "##[section]Available variables:"
+          env | grep -i version || echo "No version variables found"
+        fi
+        
+        echo "##[section]🚀 Deployment Complete!"
+        echo "##[section]📊 Build Quality Summary:"
+        echo "Code Coverage: $(codeCoverage)"
+        if [ -n "$(codeCoverage)" ]; then
+          COVERAGE_NUM=$(echo "$(codeCoverage)" | sed 's/%//')
+          if (( $(echo "$COVERAGE_NUM >= 80" | bc -l) )); then
+            echo "##[command]✅ Code Quality: Excellent coverage"
+          elif (( $(echo "$COVERAGE_NUM >= 60" | bc -l) )); then
+            echo "##[warning]⚠️ Code Quality: Good coverage"
+          else
+            echo "##[error]❌ Code Quality: Consider improving test coverage"
+          fi
+        fi
+        echo ""
+        echo "##[section]📦 Docker Images Created:"
+        echo ""
+        
+        # Get version with fallback
+        if [ -n "$(appVersion)" ]; then
+          VERSION="$(appVersion)"
+        else
+          echo "##[warning]appVersion is empty, reading VERSION file directly"
+          if [ -f "VERSION" ]; then
+            VERSION=$(cat VERSION)
+          else
+            VERSION="1.0.0"
+            echo "##[warning]VERSION file not found, using default: $VERSION"
+          fi
+        fi
+        
+        BUILD_ID="$(Build.BuildId)"
+        IMAGE_TAG="$VERSION-$BUILD_ID"
+        REGISTRY="microdatacenterdevelopment.azurecr.io"
+        
+        echo "##[section]Final values:"
+        echo "VERSION: $VERSION"
+        echo "BUILD_ID: $BUILD_ID"
+        echo "IMAGE_TAG: $IMAGE_TAG"
+        
+        echo "##[command]Generated Image Tags: $IMAGE_TAG"
+        echo ""
+        echo "##[section]🐳 Docker Pull Commands:"
+        echo "##[command]docker pull $REGISTRY/mdc-api:$IMAGE_TAG"
+        echo "##[command]docker pull $REGISTRY/mdc-web:$IMAGE_TAG" 
+        echo "##[command]docker pull $REGISTRY/mdc-db:$IMAGE_TAG"
+        echo "##[command]docker pull $REGISTRY/mdc-pve:$IMAGE_TAG"
+        echo "##[command]docker pull $REGISTRY/mdc-auth:$IMAGE_TAG"
+        echo ""
+        echo "##[section]📝 Docker Compose Example:"
+        echo "version: '3.8'"
+        echo "services:"
+        echo "  api:"
+        echo "    image: $REGISTRY/mdc-api:$IMAGE_TAG"
+        echo "  web:"
+        echo "    image: $REGISTRY/mdc-web:$IMAGE_TAG"
+        echo "  db:"
+        echo "    image: $REGISTRY/mdc-db:$IMAGE_TAG"
+        echo ""
+        echo "##[section]🔗 Azure Container Registry:"
+        echo "Registry: $REGISTRY"
+        echo "Version: $VERSION"
+        echo "Build: $BUILD_ID"
+        
+        # Set pipeline variables for external visibility
+        echo "##vso[task.setvariable variable=finalImageTag;isOutput=true]$IMAGE_TAG"
+        echo "##vso[build.updatebuildnumber]$VERSION-$BUILD_ID"
+      displayName: 'Generate Pull Instructions'
+      name: summary
+    
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Deployment Info'
+      inputs:
+        pathToPublish: '$(System.DefaultWorkingDirectory)'
+        artifactName: 'deployment-info'
+        contents: |
+          VERSION
+          README.md
+    
+    - script: |
+        # Create deployment instructions file (using unquoted HEREDOC for variable expansion)
+        cat > deployment-instructions.md << EOF
+        # MicroDataCenter Deployment - Build $(Build.BuildId)
+        
+        ## 📊 Quality Metrics
+        - **Code Coverage**: $(codeCoverage)
+        - **Test Results**: ✅ All tests passed
+        
+        ## 🏷️ Image Tags
+        - **Version**: $(appVersion)
+        - **Build ID**: $(Build.BuildId)
+        - **Full Tag**: $(appVersion)-$(Build.BuildId)
+        
+        ## 🐳 Docker Pull Commands
+        ```bash
+        # Pull all images
+        docker pull microdatacenterdevelopment.azurecr.io/mdc-api:$(appVersion)-$(Build.BuildId)
+        docker pull microdatacenterdevelopment.azurecr.io/mdc-web:$(appVersion)-$(Build.BuildId)
+        docker pull microdatacenterdevelopment.azurecr.io/mdc-db:$(appVersion)-$(Build.BuildId)
+        docker pull microdatacenterdevelopment.azurecr.io/mdc-pve:$(appVersion)-$(Build.BuildId)
+        docker pull microdatacenterdevelopment.azurecr.io/mdc-auth:$(appVersion)-$(Build.BuildId)
+        ```
+        
+        ## 📋 Docker Compose Update
+        ```yaml
+        version: '3.8'
+        services:
+          api:
+            image: microdatacenterdevelopment.azurecr.io/mdc-api:$(appVersion)-$(Build.BuildId)
+          web:
+            image: microdatacenterdevelopment.azurecr.io/mdc-web:$(appVersion)-$(Build.BuildId)
+          db:
+            image: microdatacenterdevelopment.azurecr.io/mdc-db:$(appVersion)-$(Build.BuildId)
+          pve:
+            image: microdatacenterdevelopment.azurecr.io/mdc-pve:$(appVersion)-$(Build.BuildId)
+          auth:
+            image: microdatacenterdevelopment.azurecr.io/mdc-auth:$(appVersion)-$(Build.BuildId)
+        ```
+        
+        ## 🚀 Deployment Date
+        **Built on**: $(Build.DefinitionName) - $(Build.BuildNumber)
+        **Repository**: $(Build.Repository.Name)
+        **Branch**: $(Build.SourceBranchName)
+        **Commit**: $(Build.SourceVersion)
+        EOF
+        
+        echo "##[section]📄 Deployment instructions saved to artifact"
+      displayName: 'Create Deployment Instructions'
+    
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Deployment Instructions'
+      inputs:
+        pathToPublish: '$(System.DefaultWorkingDirectory)/deployment-instructions.md'
+        artifactName: 'deployment-instructions'

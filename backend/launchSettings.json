@@ -1,0 +1,15 @@
+{
+  "profiles": {
+    "Docker Compose": {
+      "commandName": "DockerCompose",
+      "commandVersion": "1.0",
+      "composeLaunchServiceName": "mdc-api",
+      "serviceActions": {
+        "mdc-api": "StartDebugging",
+        "mdc-auth": "StartWithoutDebugging",
+        "mdc-db": "StartWithoutDebugging",
+        "mdc-pve": "StartWithoutDebugging"
+      }
+    }
+  }
+}

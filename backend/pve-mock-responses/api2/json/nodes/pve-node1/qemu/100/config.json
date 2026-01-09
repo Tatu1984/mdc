@@ -1,0 +1,33 @@
+{
+  "data": {
+    "agent": "1",
+    "args": "-device VGA,edid=on,xres=1920,yres=1080",
+    "balloon": 2048,
+    "boot": "order=scsi0;ide2;net0",
+    "bootdisk": "scsi0",
+    "cores": 2,
+    "cpu": "x86-64-v2-AES",
+    "description": "Test VM 1 - Production Web Server",
+    "digest": "abc123def456",
+    "efidisk0": "local-lvm:vm-100-disk-0,efitype=4m,size=4M",
+    "ide2": "local:iso/ubuntu-22.04.iso,media=cdrom,size=1G",
+    "memory": 2048,
+    "meta": "creation-qemu=8.0.2,ctime=1699612800",
+    "name": "test-vm-1",
+    "net0": "virtio=BC:24:11:12:34:56,bridge=vmbr0,firewall=1",
+    "numa": 0,
+    "onboot": 1,
+    "ostype": "l26",
+    "scsi0": "local-lvm:vm-100-disk-1,size=20G",
+    "scsihw": "virtio-scsi-single",
+    "smbios1": "uuid=12345678-1234-5678-9012-123456789012",
+    "sockets": 1,
+    "startup": "order=1,up=30",
+    "tags": "production;web-server",
+    "tablet": 1,
+    "template": 0,
+    "vcpus": 2,
+    "vga": "std",
+    "vmgenid": "abcd1234-5678-9012-3456-789012345678"
+  }
+}

@@ -1,0 +1,11 @@
+pve_api_url = "https://10.110.110.12:8006/api2/json"
+pve_api_username = "root@pam"
+pve_api_password = "testbeduser"
+pve_ssh_username = "root"
+pve_ssh_password = "testbeduser"
+pve_ssh_address = "10.110.110.12"
+pve_node_name = "pve"
+mdc_network_ctrl = "ens18"
+mdc_network_data = "ens19"
+mdc_network_trunk = "ens20"
+

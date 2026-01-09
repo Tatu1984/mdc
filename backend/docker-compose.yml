@@ -1,0 +1,129 @@
+services:
+  # PostgreSQL Database
+  mdc-db:
+    image: ${DOCKER_REGISTRY-}mdc-db
+    build:
+      context: .
+      dockerfile: Dockerfile_MicroDataCenter_Db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - mdc-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Keycloak Authentication Service
+  mdc-auth:
+    image: ${DOCKER_REGISTRY-}mdc-auth
+    build:
+      context: .
+      dockerfile: Dockerfile_MicroDataCenter_Auth
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://${KEYCLOAK_DB_HOST}:5432/${KEYCLOAK_DB_NAME}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KC_HOSTNAME_STRICT: ${KC_HOSTNAME_STRICT}
+      KC_HOSTNAME_STRICT_HTTPS: ${KC_HOSTNAME_STRICT_HTTPS}
+      KC_HTTP_ENABLED: ${KC_HTTP_ENABLED}
+    ports:
+      - "${KEYCLOAK_PORT}:8080"
+    depends_on:
+      mdc-db:
+        condition: service_healthy
+    networks:
+      - mdc-network
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+
+  # Proxmox VE API Mock
+  mdc-pve:
+    image: ${DOCKER_REGISTRY-}mdc-pve
+    build:
+      context: .
+      dockerfile: Dockerfile_MicroDataCenter_Pve
+    ports:
+      - "${PVE_API_PORT}:8006"
+    volumes:
+      - ./pve-mock-responses:/app/mock-responses:ro
+    networks:
+      - mdc-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mdc-api:
+    image: ${DOCKER_REGISTRY-}mdc-api
+    build:
+      context: .
+      dockerfile: Dockerfile_MicroDataCenter_Api
+    environment:
+      - ConnectionStrings__DefaultConnection=Host=${POSTGRES_HOST};Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - PVEClientService__BaseUrl=${PVE_BASE_URL}
+      - PVEClientService__AuthenticationScheme=${PVE_AUTHENTICATION_SCHEME}
+      - PVEClientService__TokenId=${PVE_TOKEN_ID}
+      - PVEClientService__Secret=${PVE_SECRET}
+      - PVEClientService__ValidateServerCertificate=${PVE_VALIDATE_SERVER_CERTIFICATE}
+      - PVEClientService__Timeout=${PVE_TIMEOUT}
+      - API_RUN_DB_MIGRATIONS=${API_RUN_DB_MIGRATIONS}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM}
+      - KEYCLOAK_AUTH_SERVER_URL=${KEYCLOAK_AUTH_SERVER_URL}
+      - KEYCLOAK_RESOURCE=${KEYCLOAK_RESOURCE}
+      - KEYCLOAK_SECRET=${KEYCLOAK_SECRET}
+      - KEYCLOAK_VERIFY_TOKEN_AUDIENCE=${KEYCLOAK_VERIFY_TOKEN_AUDIENCE}
+      - KEYCLOAK_ISSUER=${KEYCLOAK_ISSUER}
+      - API_KEYS_ENABLED=${API_KEYS_ENABLED}
+      - CORS__ALLOWEDORIGINS__0=${CORS__ALLOWEDORIGINS__0}
+      - CORS__ALLOWEDORIGINS__1=${CORS__ALLOWEDORIGINS__1}
+      - CORS__ALLOWEDORIGINS__2=${CORS__ALLOWEDORIGINS__2}
+    ports:
+      - "${API_PORT}:8081"
+    depends_on:
+      mdc-db:
+        condition: service_healthy
+      mdc-pve:
+        condition: service_started
+    networks:
+      - mdc-network
+
+  # # MDC Web Application
+  # mdc-web:
+  #   image: ${DOCKER_REGISTRY-}mdc-web
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile_MicroDataCenter_Web
+  #   #container_name: mdc-web
+  #   environment:
+  #     - NODE_ENV=${NODE_ENV}
+  #     - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+  #     - NEXT_PUBLIC_KEYCLOAK_URL=${NEXT_PUBLIC_KEYCLOAK_URL}
+  #   ports:
+  #     - "${WEB_PORT}:3000"
+  #   depends_on:
+  #     - mdc-api
+  #     - mdc-auth
+  #   networks:
+  #     - mdc-network
+
+volumes:
+  postgres_data:
+  keycloak_data:
+
+networks:
+  mdc-network:
+    driver: bridge  

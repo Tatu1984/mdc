@@ -1,0 +1,150 @@
+{{- if .Values.auth.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "microdatacenter.fullname" . }}-auth
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+    app.kubernetes.io/component: auth
+spec:
+  replicas: {{ .Values.auth.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "microdatacenter.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: auth
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+      labels:
+        {{- include "microdatacenter.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: auth
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "microdatacenter.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+        - name: keycloak
+          securityContext:
+            {{- toYaml .Values.auth.securityContext | nindent 12 }}
+          image: {{ include "microdatacenter.image" (dict "repository" .Values.auth.image.repository "Values" .Values) }}
+          imagePullPolicy: {{ .Values.auth.image.pullPolicy }}
+          args:
+            - start-dev
+          ports:
+            - name: http
+              containerPort: {{ .Values.auth.service.targetPort }}
+              protocol: TCP
+          {{- if .Values.auth.probes.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.auth.probes.liveness.path }}
+              port: {{ .Values.auth.probes.liveness.port }}
+            initialDelaySeconds: {{ .Values.auth.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.auth.probes.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.auth.probes.readiness.path }}
+              port: {{ .Values.auth.probes.readiness.port }}
+            initialDelaySeconds: {{ .Values.auth.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.auth.probes.readiness.periodSeconds }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.auth.resources | nindent 12 }}
+          env:
+            # Keycloak Admin Configuration
+            - name: KEYCLOAK_ADMIN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "microdatacenter.fullname" . }}-secrets
+                  key: keycloak-admin-user
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "microdatacenter.fullname" . }}-secrets
+                  key: keycloak-admin-password
+            
+            # Enable health endpoints
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_METRICS_ENABLED
+              value: "true"
+            
+            # Proxy configuration for running behind ingress
+            - name: KC_PROXY
+              value: "edge"
+            - name: KC_PROXY_HEADERS
+              value: "xforwarded"
+            - name: PROXY_ADDRESS_FORWARDING
+              value: "true"
+            - name: KC_HTTP_RELATIVE_PATH
+              value: "/keycloak"
+            - name: KC_HOSTNAME
+              value: {{ .Values.ingress.host | quote }}
+            
+            # Database Configuration
+            - name: KC_DB
+              value: "postgres"
+            - name: KC_DB_URL
+              {{- if .Values.db.external }}
+              value: "jdbc:postgresql://{{ .Values.db.externalDatabase.host }}:{{ .Values.db.externalDatabase.port }}/{{ .Values.auth.keycloak.database }}"
+              {{- else }}
+              value: "jdbc:postgresql://{{ include "microdatacenter.fullname" . }}-db:5432/{{ .Values.auth.keycloak.database }}"
+              {{- end }}
+            - name: KC_DB_USERNAME
+              value: {{ .Values.auth.keycloak.dbUser | quote }}
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "microdatacenter.fullname" . }}-secrets
+                  key: db-password
+            
+            # Hostname and HTTP Configuration
+            - name: KC_HOSTNAME_STRICT
+              value: {{ .Values.auth.keycloak.hostnameStrict | quote }}
+            - name: KC_HOSTNAME_STRICT_HTTPS
+              value: {{ .Values.auth.keycloak.hostnameStrictHttps | quote }}
+            - name: KC_HTTP_ENABLED
+              value: {{ .Values.auth.keycloak.httpEnabled | quote }}
+            
+            # Additional environment variables from values
+            {{- range $key, $value := .Values.auth.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          
+          volumeMounts:
+            - name: keycloak-data
+              mountPath: /opt/keycloak/data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.auth.persistence.enabled }}
+        - name: keycloak-data
+          persistentVolumeClaim:
+            claimName: {{ include "microdatacenter.fullname" . }}-auth-data
+        {{- else }}
+        - name: keycloak-data
+          emptyDir: {}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

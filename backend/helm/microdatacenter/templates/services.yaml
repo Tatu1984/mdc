@@ -1,0 +1,83 @@
+{{- if .Values.api.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "microdatacenter.fullname" . }}-api
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: {{ .Values.api.service.type }}
+  ports:
+    - port: {{ .Values.api.service.port }}
+      targetPort: {{ .Values.api.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "microdatacenter.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+{{- end }}
+
+{{- if .Values.web.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "microdatacenter.fullname" . }}-web
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  type: {{ .Values.web.service.type }}
+  ports:
+    - port: {{ .Values.web.service.port }}
+      targetPort: {{ .Values.web.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "microdatacenter.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+{{- end }}
+
+{{- if and .Values.db.enabled (not .Values.db.external) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "microdatacenter.fullname" . }}-db
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  type: {{ .Values.db.postgresql.service.type }}
+  ports:
+    - port: {{ .Values.db.postgresql.service.port }}
+      targetPort: 5432
+      protocol: TCP
+      name: postgresql
+  selector:
+    {{- include "microdatacenter.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+{{- end }}
+
+{{- if .Values.auth.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "microdatacenter.fullname" . }}-auth
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+    app.kubernetes.io/component: auth
+spec:
+  type: {{ .Values.auth.service.type }}
+  ports:
+    - port: {{ .Values.auth.service.port }}
+      targetPort: {{ .Values.auth.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "microdatacenter.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: auth
+{{- end }}

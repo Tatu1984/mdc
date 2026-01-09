@@ -1,0 +1,78 @@
+{{- if and .Values.ingress.enabled .Values.ingress.tls.enabled }}
+{{- if eq .Values.ingress.tls.provider "letsencrypt" }}
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+spec:
+  acme:
+    server: {{ .Values.ingress.tls.letsencrypt.server }}
+    email: {{ .Values.ingress.tls.letsencrypt.email }}
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+    - http01:
+        ingress:
+          class: {{ .Values.ingress.className }}
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+spec:
+  acme:
+    server: "https://acme-staging-v02.api.letsencrypt.org/directory"
+    email: {{ .Values.ingress.tls.letsencrypt.email }}
+    privateKeySecretRef:
+      name: letsencrypt-staging
+    solvers:
+    - http01:
+        ingress:
+          class: {{ .Values.ingress.className }}
+{{- end }}
+
+{{- if eq .Values.ingress.tls.provider "selfsigned" }}
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-issuer
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "microdatacenter.fullname" . }}-selfsigned-ca
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+spec:
+  isCA: true
+  commonName: {{ .Values.ingress.host }}
+  secretName: {{ include "microdatacenter.fullname" . }}-selfsigned-ca-secret
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: selfsigned-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "microdatacenter.fullname" . }}-ca-issuer
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+spec:
+  ca:
+    secretName: {{ include "microdatacenter.fullname" . }}-selfsigned-ca-secret
+{{- end }}
+{{- end }}

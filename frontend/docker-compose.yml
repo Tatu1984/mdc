@@ -1,0 +1,105 @@
+version: '3.8'
+
+# ============================================
+# MicroDataCluster Web Application
+# Next.js 14 with Node.js 18 Runtime
+# ============================================
+
+services:
+  # ============================================
+  # Frontend Web Application Service
+  # ============================================
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - NODE_ENV=production
+
+    container_name: mdc-web
+
+    # Port mapping: host:container
+    ports:
+      - "80:80"
+
+    # Environment variables for runtime configuration
+    environment:
+      # Node.js environment
+      - NODE_ENV=production
+
+      # Server configuration
+      - PORT=80
+      - HOSTNAME=0.0.0.0
+
+      # Next.js configuration
+      - NEXT_TELEMETRY_DISABLED=1
+
+      # Backend API URL - can be overridden via .env file
+      # Update this to point to your actual backend API endpoint
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://localhost:8081}
+
+    # Optional: Use .env file for environment variables
+    # Uncomment the line below and create a .env file in the project root
+    # env_file:
+    #   - .env
+
+    # Restart policy: restart container unless explicitly stopped
+    restart: unless-stopped
+
+    # Health check configuration
+    # Monitors application health via /api/health endpoint
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://localhost:80/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+
+    # Resource limits (optional, uncomment to enable)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '1.0'
+    #       memory: 1G
+    #     reservations:
+    #       cpus: '0.5'
+    #       memory: 512M
+
+    # Logging configuration
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Network configuration
+    networks:
+      - mdc-network
+
+    # Dependencies (uncomment if you have a backend service)
+    # depends_on:
+    #   backend:
+    #     condition: service_healthy
+
+# ============================================
+# Network Configuration
+# ============================================
+networks:
+  mdc-network:
+    driver: bridge
+    # Optional: Custom network configuration
+    # ipam:
+    #   driver: default
+    #   config:
+    #     - subnet: 172.28.0.0/16
+
+# ============================================
+# Volume Configuration (if needed)
+# ============================================
+# volumes:
+#   mdc-data:
+#     driver: local

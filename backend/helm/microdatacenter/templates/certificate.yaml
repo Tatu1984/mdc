@@ -1,0 +1,28 @@
+{{- if and .Values.ingress.enabled .Values.ingress.tls.enabled }}
+{{- if ne .Values.ingress.tls.provider "custom" }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "microdatacenter.fullname" . }}-tls
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "microdatacenter.fullname" . }}-tls
+  dnsNames:
+  - {{ .Values.ingress.host }}
+  {{- if eq .Values.ingress.tls.provider "letsencrypt" }}
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+    group: cert-manager.io
+  {{- else if eq .Values.ingress.tls.provider "selfsigned" }}
+  issuerRef:
+    name: {{ include "microdatacenter.fullname" . }}-ca-issuer
+    kind: Issuer
+    group: cert-manager.io
+  {{- end }}
+  usages:
+  - digital signature
+  - key encipherment
+{{- end }}
+{{- end }}

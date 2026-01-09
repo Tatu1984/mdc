@@ -1,0 +1,12 @@
+# Keycloak Dockerfile - already runs as non-root user by default
+FROM quay.io/keycloak/keycloak:23.0
+
+# Set working directory
+WORKDIR /opt/keycloak
+
+# Expose port
+EXPOSE 8080
+
+# Set default command
+ENTRYPOINT ["/opt/keycloak/bin/kc.sh"]
+CMD ["start-dev"]

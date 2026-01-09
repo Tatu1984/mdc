@@ -1,0 +1,40 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Docker
+**/Dockerfile*
+**/docker-compose*
+.dockerignore
+
+# Documentation
+README.md
+**/readme*.md
+
+# Build outputs
+**/bin/
+**/obj/
+**/out/
+
+# Visual Studio
+**/.vs/
+**/.vscode/
+**/*.user
+**/*.suo
+**/*.userosscache
+**/*.sln.docstates
+
+# Test results
+**/TestResults/
+
+# Node modules (for MDC.Web)
+**/node_modules/
+**/.next/
+
+# Environment files
+**/.env*
+
+# Logs
+**/logs/
+**/*.log

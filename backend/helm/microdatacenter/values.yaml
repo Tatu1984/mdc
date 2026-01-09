@@ -1,0 +1,359 @@
+# Default values for microdatacenter
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+global:
+  imageRegistry: "microdatacenterdevelopment.azurecr.io"
+  imagePullSecrets:
+    - name: azure-registry-secret
+  
+nameOverride: ""
+fullnameOverride: ""
+
+# Image tags - Override these for specific deployments
+image:
+  tag: "1.0.0-36"  # Update this with your latest build
+
+# API Service Configuration
+api:
+  enabled: true
+  swagger:
+    enabled: true
+  scalar:
+    enabled: true
+  replicaCount: 1
+  image:
+    repository: mdc-api
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  
+  # Environment Variables
+  env:
+    ASPNETCORE_ENVIRONMENT: "Production"
+    ASPNETCORE_URLS: "http://+:8080"
+    API_RUN_DB_MIGRATIONS: "true"
+    # Keycloak configuration for JWT validation
+    KEYCLOAK_REALM: "microdatacenter"
+    KEYCLOAK_AUTH_SERVER_URL: "http://microdatacenter-auth:8080/keycloak"  # Internal service URL with path
+    KEYCLOAK_RESOURCE: "mdc-api"
+    KEYCLOAK_SECRET: ""  # Client secret if using confidential client
+    KEYCLOAK_VERIFY_TOKEN_AUDIENCE: "true"
+    KEYCLOAK_ISSUER: "https://microdatacenter.local/keycloak/realms/microdatacenter"  # External issuer URL that matches the token
+    API_KEYS_ENABLED: "false"
+  
+  # Health checks
+  probes:
+    enabled: true
+    liveness:
+      path: /health
+      port: 8080
+      initialDelaySeconds: 30
+      periodSeconds: 10
+    readiness:
+      path: /health/ready
+      port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 5
+
+# Web Application Configuration  
+web:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: mdc-web
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: ClusterIP
+    port: 3000
+    targetPort: 3000
+  
+  resources:
+    limits:
+      cpu: 300m
+      memory: 256Mi
+    requests:
+      cpu: 150m
+      memory: 128Mi
+  
+  # Next.js Environment Variables (available at runtime)
+  env:
+    NODE_ENV: "production"
+    API_URL: "/api"  # Will be set to API service URL
+    KEYCLOAK_URL: "/keycloak" # Keycloak URL
+    KEYCLOAK_REALM: "microdatacenter" # Keycloak realm
+    KEYCLOAK_CLIENT_ID: "mdc-web" # Keycloak client ID
+
+  # Health checks
+  probes:
+    enabled: true
+    liveness:
+      path: /
+      port: 3000
+      initialDelaySeconds: 30
+      periodSeconds: 10
+    readiness:
+      path: /
+      port: 3000
+      initialDelaySeconds: 5
+      periodSeconds: 5
+
+# Database Configuration
+db:
+  enabled: true
+  # Use external database or deploy one
+  external: false
+  
+  # Internal PostgreSQL (if external: false)
+  postgresql:
+    replicaCount: 1
+    image:
+      repository: mdc-db
+      tag: "1.0.0"  # Will be overridden by global image.tag
+      pullPolicy: IfNotPresent
+    
+    service:
+      type: ClusterIP
+      port: 5432
+    
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 512Mi
+    
+    persistence:
+      enabled: true
+      storageClass: ""  # Use default storage class
+      size: 20Gi
+      accessMode: ReadWriteOnce
+    
+    # Database credentials (will be stored in secrets)
+    auth:
+      database: "microdatacenter"
+      username: "mdc_user"
+      # password: ""  # Set in secrets or auto-generate
+    
+    # Database-specific security context (allows writing for PostgreSQL)
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      readOnlyRootFilesystem: false  # PostgreSQL needs to write various files
+  
+  # External database connection (if external: true)
+  externalDatabase:
+    host: ""
+    port: 5432
+    database: "microdatacenter"
+    username: "mdc_user"
+    # password: ""  # Set in secrets
+    sslMode: "require"
+
+# Authentication Service Configuration (Keycloak)
+auth:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: mdc-auth
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  
+  # Keycloak-specific configuration
+  keycloak:
+    database: "keycloak"
+    dbUser: "mdc_user"  # Same as main DB user
+    hostnameStrict: "false"
+    hostnameStrictHttps: "false"
+    httpEnabled: "true"
+    realm: "microdatacenter"
+  
+  # Auth-specific security context (allows writing for Keycloak)
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+    readOnlyRootFilesystem: false  # Keycloak needs to write to /opt/keycloak/lib/quarkus
+  
+  # Persistence for Keycloak data
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 1Gi
+    accessMode: ReadWriteOnce
+  
+  # Additional environment variables
+  env: {}
+  
+  # Health checks
+  probes:
+    enabled: true
+    liveness:
+      path: /keycloak/health/live
+      port: 8080
+      initialDelaySeconds: 120
+      periodSeconds: 30
+    readiness:
+      path: /keycloak/health/ready
+      port: 8080
+      initialDelaySeconds: 90
+      periodSeconds: 10
+
+# Ingress Configuration
+ingress:
+  enabled: true
+  className: "traefik"  # k3s default
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  
+  # Domain configuration
+  host: "microdatacenter.local"
+  
+  # TLS Configuration
+  tls:
+    enabled: true
+    # Options: selfsigned, letsencrypt, custom
+    provider: "selfsigned"
+    
+    # Let's Encrypt configuration
+    letsencrypt:
+      email: "admin@example.com"
+      server: "https://acme-v02.api.letsencrypt.org/directory"  # prod
+      # server: "https://acme-staging-v02.api.letsencrypt.org/directory"  # staging
+    
+    # Custom certificate (provide as secret)
+    custom:
+      secretName: "microdatacenter-tls"
+      # Create secret with: kubectl create secret tls microdatacenter-tls --cert=cert.pem --key=key.pem
+
+# Secrets Configuration
+secrets:
+  # Database password (auto-generated if not provided)
+  dbPassword: ""
+  dbConnectionString: ""  # Complete connection string with actual password
+  # Keycloak Admin Credentials
+  keycloakAdmin:
+    username: "admin"
+    password: ""  # Auto-generated if not provided
+  
+  # Keycloak Database Password (can be same as main DB or different)
+  keycloakDbPassword: ""  # Auto-generated if not provided
+  
+  # API Keys and JWT secrets
+  jwtSecret: ""
+  apiSecret: ""
+  
+  # Proxmox API Token credentials
+  proxmoxCredentials:
+    baseUrl: ""  # e.g., https://your-proxmox.local:8006/api2/json/
+    tokenId: ""  # e.g., user@pam!tokenname
+    secret: ""   # API token secret
+  
+  # Create additional secrets as needed
+  additional: {}
+    # secretName:
+    #   key1: value1
+    #   key2: value2
+
+# ConfigMaps for non-sensitive configuration
+configMaps:
+  # Application settings that can be shared
+  appConfig:
+    LOG_LEVEL: "Information"
+    MAX_REQUEST_SIZE: "32MB"
+    CACHE_TIMEOUT: "300"
+  
+  # Additional config maps
+  additional: {}
+
+# Security Context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 2000
+  seccompProfile:
+    type: RuntimeDefault
+
+podSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+
+# Service Account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Node selection and affinity
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  # Prefer to spread pods across nodes
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - microdatacenter
+        topologyKey: kubernetes.io/hostname
+
+# Monitoring and observability (optional)
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    labels: {}
+    interval: 30s
+    path: /metrics
+
+# Network Policies (optional)
+networkPolicy:
+  enabled: false
+  ingress: {}
+  egress: {}

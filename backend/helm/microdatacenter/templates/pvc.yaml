@@ -1,0 +1,47 @@
+{{- if and .Values.db.enabled (not .Values.db.external) .Values.db.postgresql.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "microdatacenter.fullname" . }}-db-data
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  accessModes:
+    - {{ .Values.db.postgresql.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.db.postgresql.persistence.size }}
+  {{- if .Values.db.postgresql.persistence.storageClass }}
+  {{- if (eq "-" .Values.db.postgresql.persistence.storageClass) }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: {{ .Values.db.postgresql.persistence.storageClass }}
+  {{- end }}
+  {{- end }}
+{{- end }}
+
+{{- if and .Values.auth.enabled .Values.auth.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "microdatacenter.fullname" . }}-auth-data
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+    app.kubernetes.io/component: auth
+spec:
+  accessModes:
+    - {{ .Values.auth.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.auth.persistence.size }}
+  {{- if .Values.auth.persistence.storageClass }}
+  {{- if (eq "-" .Values.auth.persistence.storageClass) }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: {{ .Values.auth.persistence.storageClass }}
+  {{- end }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,106 @@
+{{- if and .Values.db.enabled (not .Values.db.external) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "microdatacenter.fullname" . }}-db
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  replicas: {{ .Values.db.postgresql.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "microdatacenter.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+      labels:
+        {{- include "microdatacenter.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: database
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "microdatacenter.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+        - name: postgresql
+          securityContext:
+            {{- toYaml .Values.db.postgresql.securityContext | nindent 12 }}
+          image: {{ include "microdatacenter.image" (dict "repository" .Values.db.postgresql.image.repository "Values" .Values) }}
+          imagePullPolicy: {{ .Values.db.postgresql.image.pullPolicy }}
+          ports:
+            - name: tcp-postgresql
+              containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.db.postgresql.auth.username | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "microdatacenter.fullname" . }}-secrets
+                  key: db-password
+            - name: POSTGRES_DB
+              value: {{ .Values.db.postgresql.auth.database | quote }}
+            - name: PGDATA
+              value: "/var/lib/postgresql/data/pgdata"
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - exec pg_isready -U {{ .Values.db.postgresql.auth.username | quote }} -d {{ .Values.db.postgresql.auth.database | quote }} -h 127.0.0.1 -p 5432
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - exec pg_isready -U {{ .Values.db.postgresql.auth.username | quote }} -d {{ .Values.db.postgresql.auth.database | quote }} -h 127.0.0.1 -p 5432
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.db.postgresql.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: tmp
+              mountPath: /tmp
+            - name: postgresql-run
+              mountPath: /var/run/postgresql
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: postgresql-run
+          emptyDir: {}
+        {{- if .Values.db.postgresql.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "microdatacenter.fullname" . }}-db-data
+        {{- else }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

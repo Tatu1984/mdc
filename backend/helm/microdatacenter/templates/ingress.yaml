@@ -1,0 +1,84 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "microdatacenter.fullname" . }}
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      {{- if eq .Values.ingress.tls.provider "custom" }}
+      secretName: {{ .Values.ingress.tls.custom.secretName }}
+      {{- else }}
+      secretName: {{ include "microdatacenter.fullname" . }}-tls
+      {{- end }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          {{- if .Values.web.enabled }}
+          # Web Application (root path)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "microdatacenter.fullname" . }}-web
+                port:
+                  number: {{ .Values.web.service.port }}
+          {{- end }}
+          
+          {{- if .Values.api.enabled }}
+          # API Service
+          - path: /odata
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "microdatacenter.fullname" . }}-api
+                port:
+                  number: {{ .Values.api.service.port }}
+          {{- end }}
+
+          {{- if .Values.api.swagger.enabled }}
+          # API Service
+          - path: /swagger
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "microdatacenter.fullname" . }}-api
+                port:
+                  number: {{ .Values.api.service.port }}
+          {{- end }}
+
+          {{- if .Values.api.scalar.enabled }}
+          # API Service
+          - path: /scalar
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "microdatacenter.fullname" . }}-api
+                port:
+                  number: {{ .Values.api.service.port }}
+          {{- end }}
+          
+          {{- if .Values.auth.enabled }}
+          # Keycloak Authentication
+          - path: /keycloak
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "microdatacenter.fullname" . }}-auth
+                port:
+                  number: {{ .Values.auth.service.port }}
+          {{- end }}
+{{- end }}

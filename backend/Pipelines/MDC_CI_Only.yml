@@ -1,0 +1,140 @@
+# CI Pipeline - Tests Only (No Image Push)
+# Runs automatically on code changes for validation
+
+trigger:
+  branches:
+    include:
+    - main
+    - develop
+    - feature/*
+  paths:
+    include:
+    - MDC.Api/**
+    - MDC.Core/**
+    - MDC.Shared/**
+
+pr:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - MDC.Api/**
+    - MDC.Core/**
+    - MDC.Shared/**
+
+variables:
+  buildConfiguration: 'Release'
+  dotNetVersion: '9.0.x'
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+- stage: ValidateCode
+  displayName: 'Code Validation'
+  jobs:
+  - job: RunTests
+    displayName: 'Run Unit Tests'
+    steps:
+    - task: UseDotNet@2
+      displayName: 'Install .NET SDK'
+      inputs:
+        packageType: 'sdk'
+        version: '$(dotNetVersion)'
+    
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore packages'
+      inputs:
+        command: 'restore'
+        projects: '**/*.csproj'
+    
+    - task: DotNetCoreCLI@2
+      displayName: 'Build solution'
+      inputs:
+        command: 'build'
+        projects: '**/*.csproj'
+        arguments: '--configuration $(buildConfiguration) --no-restore'
+    
+    - script: |
+        echo "##[section]🔍 Pre-test Diagnostics"
+        echo "Current directory: $(pwd)"
+        echo "Test project files:"
+        find . -name "*.Tests.csproj" -not -path "*/MDC.Integration.Tests*"
+        echo ""
+        echo "Test data files in output directories:"
+        find . -name "*.json" -path "*/bin/Debug/net9.0/*" | head -10
+      displayName: 'Test Environment Diagnostics'
+    
+    - task: DotNetCoreCLI@2
+      displayName: 'Run unit tests with code coverage'
+      inputs:
+        command: 'test'
+        projects: |
+          **/*Tests.csproj
+          !**/MDC.Integration.Tests.csproj
+        arguments: '--configuration $(buildConfiguration) --no-build --logger trx --collect:"XPlat Code Coverage" --settings coverlet.runsettings /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura /p:CoverletOutput=./coverage/ /p:Exclude="[xunit*]*%2c[*.Tests*]*" --verbosity normal'
+        publishTestResults: true
+        failOnStandardError: true
+    
+    - script: |
+        echo "##[section]📊 Generating Code Coverage Report"
+        dotnet tool install -g dotnet-reportgenerator-globaltool || echo "ReportGenerator already installed"
+        
+        # Find all coverage files
+        find $(Agent.TempDirectory) -name "coverage.cobertura.xml" -type f
+        
+        # Generate HTML report
+        reportgenerator -reports:"$(Agent.TempDirectory)/**/coverage.cobertura.xml" -targetdir:"$(System.DefaultWorkingDirectory)/coveragereport" -reporttypes:"Html;HtmlSummary;Badges;TextSummary"
+        
+        # Display summary
+        if [ -f "$(System.DefaultWorkingDirectory)/coveragereport/Summary.txt" ]; then
+          echo "##[section]📈 Code Coverage Summary:"
+          cat "$(System.DefaultWorkingDirectory)/coveragereport/Summary.txt"
+        fi
+        
+        # Extract coverage percentage for display
+        if [ -f "$(System.DefaultWorkingDirectory)/coveragereport/Summary.txt" ]; then
+          COVERAGE=$(grep "Line coverage:" "$(System.DefaultWorkingDirectory)/coveragereport/Summary.txt" | awk '{print $3}')
+          echo "##[command]Overall Line Coverage: $COVERAGE"
+          
+          # Set build tag with coverage (replace % with pct to avoid URL encoding issues)
+          COVERAGE_TAG=$(echo "$COVERAGE" | sed 's/%/pct/')
+          echo "##vso[build.addbuildtag]coverage-$COVERAGE_TAG"
+          
+          # Coverage quality feedback
+          COVERAGE_NUM=$(echo "$COVERAGE" | sed 's/%//')
+          if (( $(echo "$COVERAGE_NUM >= 80" | bc -l) )); then
+            echo "##[command]✅ Excellent coverage: $COVERAGE"
+          elif (( $(echo "$COVERAGE_NUM >= 60" | bc -l) )); then
+            echo "##[warning]⚠️ Good coverage, room for improvement: $COVERAGE"
+          else
+            echo "##[warning]⚠️ Low coverage detected: $COVERAGE"
+            echo "##[warning]Consider adding more unit tests before deployment"
+            # Uncomment to fail build on low coverage
+            # exit 1
+          fi
+        fi
+      displayName: 'Generate Coverage Report'
+    
+    - task: PublishCodeCoverageResults@2
+      displayName: 'Publish code coverage to Azure DevOps'
+      condition: succeededOrFailed()
+      inputs:
+        summaryFileLocation: '$(Agent.TempDirectory)/**/coverage.cobertura.xml'
+        pathToSources: '$(System.DefaultWorkingDirectory)'
+        codecoverageTool: 'Cobertura'
+        reportDirectory: '$(System.DefaultWorkingDirectory)/coveragereport'
+        failIfCoverageEmpty: false
+    
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Coverage Report'
+      condition: succeededOrFailed()
+      inputs:
+        pathToPublish: '$(System.DefaultWorkingDirectory)/coveragereport'
+        artifactName: 'code-coverage-report'
+    
+    - script: |
+        echo "✅ All tests passed! Code is ready for deployment."
+        echo "To deploy images, run the 'MDC_MultiService_Hybrid.yml' pipeline manually."
+      displayName: 'Validation Complete'

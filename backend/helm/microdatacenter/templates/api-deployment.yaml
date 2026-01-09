@@ -1,0 +1,158 @@
+{{- if .Values.api.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "microdatacenter.fullname" . }}-api
+  labels:
+    {{- include "microdatacenter.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "microdatacenter.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+      labels:
+        {{- include "microdatacenter.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "microdatacenter.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+        - name: api
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          image: {{ include "microdatacenter.image" (dict "repository" .Values.api.image.repository "Values" .Values) }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.service.targetPort }}
+              protocol: TCP
+          {{- if .Values.api.probes.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.api.probes.liveness.path }}
+              port: {{ .Values.api.probes.liveness.port }}
+            initialDelaySeconds: {{ .Values.api.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.probes.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.api.probes.readiness.path }}
+              port: {{ .Values.api.probes.readiness.port }}
+            initialDelaySeconds: {{ .Values.api.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.probes.readiness.periodSeconds }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          env:
+            # Basic configuration
+            - name: ASPNETCORE_ENVIRONMENT
+              value: {{ .Values.api.env.ASPNETCORE_ENVIRONMENT | quote }}
+            - name: ASPNETCORE_URLS
+              value: {{ .Values.api.env.ASPNETCORE_URLS | quote }}
+            - name: API_RUN_DB_MIGRATIONS
+              value: {{ .Values.api.env.API_RUN_DB_MIGRATIONS | quote }}
+
+            - name: KEYCLOAK_REALM
+              value: {{ .Values.api.env.KEYCLOAK_REALM | quote }}
+            - name: KEYCLOAK_AUTH_SERVER_URL
+              value: {{ .Values.api.env.KEYCLOAK_AUTH_SERVER_URL | quote }}
+            - name: KEYCLOAK_RESOURCE
+              value: {{ .Values.api.env.KEYCLOAK_RESOURCE | quote }}
+            - name: KEYCLOAK_SECRET
+              value: {{ .Values.api.env.KEYCLOAK_SECRET | quote }}
+            - name: KEYCLOAK_VERIFY_TOKEN_AUDIENCE
+              value: {{ .Values.api.env.KEYCLOAK_VERIFY_TOKEN_AUDIENCE | quote }}
+            - name: KEYCLOAK_ISSUER
+              value: {{ .Values.api.env.KEYCLOAK_ISSUER | quote }} 
+            - name: API_KEYS_ENABLED
+              value: {{ .Values.api.env.API_KEYS_ENABLED | quote }} 
+
+            # Database connection
+            - name: ConnectionStrings__DefaultConnection
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "microdatacenter.fullname" . }}-secrets
+                  key: db-connection-string
+            
+            # JWT Configuration
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "microdatacenter.fullname" . }}-secrets
+                  key: jwt-secret
+            - name: API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "microdatacenter.fullname" . }}-secrets
+                  key: api-secret
+            
+            # Proxmox API Configuration (if provided)
+            {{- if .Values.secrets.proxmoxCredentials.tokenId }}
+            - name: PVEClientService__BaseUrl
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "microdatacenter.fullname" . }}-secrets
+                  key: proxmox-base-url
+            - name: PVEClientService__AuthenticationScheme
+              value: "PVEAPIToken"
+            - name: PVEClientService__TokenId
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "microdatacenter.fullname" . }}-secrets
+                  key: proxmox-token-id
+            - name: PVEClientService__Secret
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "microdatacenter.fullname" . }}-secrets
+                  key: proxmox-secret
+            - name: PVEClientService__ValidateServerCertificate
+              value: "false"
+            - name: PVEClientService__Timeout
+              value: "30"
+            {{- end }}
+            
+            # ConfigMap values
+            {{- range $key, $value := .Values.configMaps.appConfig }}
+            - name: {{ $key }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "microdatacenter.fullname" $ }}-config
+                  key: {{ $key }}
+            {{- end }}
+          
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: var-log
+              mountPath: /var/log
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: var-log
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
