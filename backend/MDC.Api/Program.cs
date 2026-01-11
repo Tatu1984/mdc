@@ -38,7 +38,10 @@ namespace MDC.Api
         {
             // Learn more about configuring OData at https://learn.microsoft.com/odata/webapi-8/getting-started
             var builder = WebApplication.CreateBuilder(args);
-            
+
+            // Ensure environment variables are loaded (Railway sets these)
+            builder.Configuration.AddEnvironmentVariables();
+
             builder.Services.AddMicroDatacenterCore(builder.Configuration);
             builder.Configuration.AddUserSecrets<Program>();
             
