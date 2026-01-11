@@ -5,5 +5,6 @@ global using System.Security.Claims;
 global using System.Threading;
 global using System.Threading.Tasks;
 global using Microsoft.Extensions.Primitives;
+global using Microsoft.AspNetCore.Http;
 global using MDC.Core.Services.Api;
 global using MDC.Shared.Models;

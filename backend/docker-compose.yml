@@ -92,7 +92,7 @@ services:
       - CORS__ALLOWEDORIGINS__1=${CORS__ALLOWEDORIGINS__1}
       - CORS__ALLOWEDORIGINS__2=${CORS__ALLOWEDORIGINS__2}
     ports:
-      - "${API_PORT}:8081"
+      - "${API_PORT}:8080"
     depends_on:
       mdc-db:
         condition: service_healthy

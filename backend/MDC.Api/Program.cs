@@ -236,7 +236,7 @@ namespace MDC.Api
             app.MapOpenApi();
 
             // Health check endpoint
-            app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
+            app.MapGet("/health", () => new { status = "healthy", timestamp = DateTime.UtcNow });
 
             // app.UseRouting();
 
