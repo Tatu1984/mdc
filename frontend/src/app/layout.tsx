@@ -21,8 +21,17 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
 
   const isPublicRoute = publicRoutes.includes(pathname)
 
+  // Show loading state while checking auth (only for non-public routes)
+  if (!isPublicRoute && isLoading) {
+    return (
+      <main className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </main>
+    )
+  }
+
   // For public routes or when not authenticated, show simple layout
-  if (isPublicRoute || (!isLoading && !isAuthenticated)) {
+  if (isPublicRoute || !isAuthenticated) {
     return (
       <main className="min-h-screen">
         {children}

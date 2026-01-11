@@ -91,9 +91,9 @@ export const KeycloakProvider: React.FC<{ children: ReactNode }> = ({ children }
 
         const authenticated = await kc.init({
           onLoad: 'check-sso',
-          silentCheckSsoRedirectUri: window.location.origin + '/silent-check-sso.html',
           pkceMethod: 'S256',
           checkLoginIframe: false,
+          silentCheckSsoFallback: false,
         });
 
         setIsAuthenticated(authenticated);
@@ -145,11 +145,11 @@ export const KeycloakProvider: React.FC<{ children: ReactNode }> = ({ children }
   }, [keycloakInstance, isAuthenticated]);
 
   /**
-   * Login handler
+   * Login handler - redirects to dashboard after login
    */
   const login = () => {
     if (keycloakInstance) {
-      keycloakInstance.login();
+      keycloakInstance.login({ redirectUri: window.location.origin + '/' });
     }
   };
 
@@ -158,16 +158,16 @@ export const KeycloakProvider: React.FC<{ children: ReactNode }> = ({ children }
    */
   const loginPopup = async () => {
     if (keycloakInstance) {
-      keycloakInstance.login();
+      keycloakInstance.login({ redirectUri: window.location.origin + '/' });
     }
   };
 
   /**
-   * Logout handler
+   * Logout handler - redirects to landing page after logout
    */
   const logout = () => {
     if (keycloakInstance) {
-      keycloakInstance.logout({ redirectUri: window.location.origin });
+      keycloakInstance.logout({ redirectUri: window.location.origin + '/get-started' });
     }
     setIsAuthenticated(false);
     setUser(null);
