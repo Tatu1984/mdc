@@ -1,8 +1,6 @@
 # Use the official .NET 9.0 runtime as a parent image
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS base
 WORKDIR /app
-EXPOSE 8080
-EXPOSE 8081
 
 # Use the SDK image to build the application
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
@@ -26,4 +24,9 @@ RUN dotnet publish "MDC.Api.csproj" -c Release -o /app/publish /p:UseAppHost=fal
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
+
+# Railway provides PORT env variable
+ENV ASPNETCORE_URLS=http://+:${PORT:-8080}
+EXPOSE ${PORT:-8080}
+
 ENTRYPOINT ["dotnet", "MDC.Api.dll"]

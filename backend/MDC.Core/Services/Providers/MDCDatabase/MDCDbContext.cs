@@ -34,20 +34,11 @@ namespace MDC.Core.Services.Providers.MDCDatabase
                 // optionsBuilder.UseInMemoryDatabase("MDC");
                 throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
             }
-            optionsBuilder.UseSqlServer(connectionString, options =>
+            optionsBuilder.UseNpgsql(connectionString, options =>
             {
                 options.MigrationsAssembly("MDC.Core");
                 options.MigrationsHistoryTable("__EFMigrationsHistory");
-                //options.EnableRetryOnFailure(
-                //    maxRetryCount: 5,
-                //    maxRetryDelay: TimeSpan.FromSeconds(10),
-                //    errorNumbersToAdd: null);
             });
-            //optionsBuilder.UseNpgsql(connectionString, options =>
-            //{
-            //    options.MigrationsAssembly("MDC.Core");
-            //    options.MigrationsHistoryTable("__EFMigrationsHistory");
-            //});
         }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)

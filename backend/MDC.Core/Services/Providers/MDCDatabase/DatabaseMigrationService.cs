@@ -20,7 +20,7 @@ internal class DatabaseMigrationService(MDCDbContext context, ILogger<DatabaseMi
         try
         {
             logger.LogInformation("Starting database migration...");
-            
+
             if (context.Database.IsInMemory())
             {
                 logger.LogInformation("Ensuring InMemory Database is created");
@@ -31,16 +31,34 @@ internal class DatabaseMigrationService(MDCDbContext context, ILogger<DatabaseMi
             var pendingMigrations = await context.Database.GetPendingMigrationsAsync(cancellationToken);
             if (pendingMigrations.Any())
             {
-                logger.LogInformation("Found {Count} pending migrations: {Migrations}", 
+                logger.LogInformation("Found {Count} pending migrations: {Migrations}",
                     pendingMigrations.Count(), string.Join(", ", pendingMigrations));
-                
+
                 await context.Database.MigrateAsync(cancellationToken);
                 logger.LogInformation("Database migration completed successfully");
                 return true; // Migrations were applied
             }
             else
             {
-                logger.LogInformation("Database is already up to date");
+                // Check if database tables exist - if not, use EnsureCreated for initial setup
+                var canConnect = await context.Database.CanConnectAsync(cancellationToken);
+                if (canConnect)
+                {
+                    try
+                    {
+                        // Try to query a table to see if schema exists
+                        _ = await context.Datacenters.AnyAsync(cancellationToken);
+                        logger.LogInformation("Database is already up to date");
+                    }
+                    catch
+                    {
+                        // Tables don't exist, create them
+                        logger.LogInformation("No migrations found, creating database schema...");
+                        await context.Database.EnsureCreatedAsync(cancellationToken);
+                        logger.LogInformation("Database schema created successfully");
+                        return true;
+                    }
+                }
                 return false; // No migrations were applied
             }
         }
@@ -68,9 +86,23 @@ internal class DatabaseMigrationService(MDCDbContext context, ILogger<DatabaseMi
     {
         try
         {
-            // Check if the database exists and has any applied migrations
-            var appliedMigrations = await context.Database.GetAppliedMigrationsAsync(cancellationToken);
-            return !appliedMigrations.Any();
+            // Check if the database exists and has tables
+            var canConnect = await context.Database.CanConnectAsync(cancellationToken);
+            if (!canConnect)
+            {
+                return true;
+            }
+
+            try
+            {
+                // Try to query a table to see if schema exists
+                _ = await context.Datacenters.AnyAsync(cancellationToken);
+                return false; // Tables exist, not a new database
+            }
+            catch
+            {
+                return true; // Tables don't exist, it's a new database
+            }
         }
         catch (Exception ex)
         {
